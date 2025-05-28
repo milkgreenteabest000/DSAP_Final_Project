@@ -4,7 +4,7 @@
       "name": "windows-gcc-x64",
       "includePath": [
         "${workspaceFolder}/**",
-        "SFML-3.0.0\\include"
+        "C:\\SFML-3.0.0\\include"
       ],
       "defines": [
         "_DEBUG",

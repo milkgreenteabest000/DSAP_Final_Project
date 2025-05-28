@@ -4,7 +4,7 @@
 
 #include <SFML/Graphics.hpp>
 #include <SFML/Window.hpp>
-#include "GameRenderer.hpp"
+#include "./GameRenderer.hpp"
 
 using namespace Feis;
 

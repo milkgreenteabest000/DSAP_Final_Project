@@ -119,7 +119,7 @@ public:
         pathIndex++;
         if (pathIndex >= path.size()) {
             pathLayer++; // 完成一圈，往外擴
-            if(pathLayer >= 30) return {Feis::PlayerActionType::None, {0, 0}};
+            if(pathLayer >= 31) return {Feis::PlayerActionType::None, {0, 0}};
             path = generatePath(pathLayer);
             pathIndex = 0;
         }

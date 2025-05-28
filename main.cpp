@@ -75,205 +75,130 @@ int getNextDirection(const Feis::CellPosition x){
     return 2;
 }
 
-vector<Feis::CellPosition> generatePath(int d) {
-    vector<Feis::CellPosition> path;
-    int left = 30 - d;
-    int right = 31 + d;
+struct CellPositionHasher {
+    std::size_t operator()(const Feis::CellPosition& pos) const {
+        return std::hash<int>()(pos.row) ^ (std::hash<int>()(pos.col) << 1);
+    }
+};
 
-    auto isValid = [](int row, int col) {
-        return row >= 0 && row <= Feis::GameManagerConfig::kBoardHeight && col >= 0 && col <= Feis::GameManagerConfig::kBoardWidth;
-    };
-
-    for (int row = 17; row >= 0; --row) {
-        if (isValid(row, left)) path.push_back({row, left});
-    }
-    for (int row = 18; row <= Feis::GameManagerConfig::kBoardHeight; ++row) {
-        if (isValid(row, right)) path.push_back({row, left});
-    }
-    for (int row = 17; row >= 0; --row) {
-        if (isValid(row, left)) path.push_back({row, right});
-    }
-    for (int row = 18; row <= Feis::GameManagerConfig::kBoardHeight; ++row) {
-        if (isValid(row, right)) path.push_back({row, right});
-    }
-
-    return path;
-}
 
 class GamePlayer final : public Feis::IGamePlayer
 {
 public:
     Feis::PlayerAction GetNextAction(const Feis::IGameInfo& info) override
-    {   
-        // static 狀態變數，模擬我們在走路
-        static int pathLayer = 0;
-        static vector<Feis::CellPosition> path = generatePath(pathLayer);
-        static int pathIndex = 0;
-
-        if(pathLayer >= 31) return {Feis::PlayerActionType::None, {0, 0}};
-
-        // 下一步要去哪
-        Feis::CellPosition nextMove = path[pathIndex];
-
-        // 更新狀態
-        pathIndex++;
-        if (pathIndex >= path.size()) {
-            pathLayer++; // 完成一圈，往外擴
-            if(pathLayer >= 31) return {Feis::PlayerActionType::None, {0, 0}};
-            path = generatePath(pathLayer);
-            pathIndex = 0;
+    {
+        static std::queue<Feis::CellPosition> q;
+        static std::unordered_set<Feis::CellPosition, CellPositionHasher> visited;
+        static bool isFirst = 1;
+        if(isFirst){
+            q.push({15, 29});
+            isFirst = 0;
+            visited.insert({15, 29});
         }
+        PlayerAction nothing = {Feis::PlayerActionType::None, {0, 0}};
+        while (!q.empty()) {
+            PlayerAction result = nothing;
 
-        if(!Feis::IsWithinBoard(nextMove)) return GetNextAction(info);
-        for(int i = 0; i < 4; i++){
-            for(int j = 0; j < 4; j++){
-                if(centerPosition[i][j].col == nextMove.col && centerPosition[i][j].row == nextMove.row) return GetNextAction(info);
+            Feis::CellPosition pos = q.front();
+            q.pop();
+
+            cout << pos.col << " " << pos.row << endl;
+
+            Feis::LayeredCell cell = info.GetLayeredCell(pos);
+            auto bg = cell.GetBackground();
+            auto fg = cell.GetForeground();
+
+            if (auto mining = std::dynamic_pointer_cast<Feis::NumberCell>(bg)) {
+                if (info.IsScoredProduct(mining->GetNumber())) {
+                    for (auto dir : {Feis::Direction::kTop, Feis::Direction::kBottom,
+                                    Feis::Direction::kLeft, Feis::Direction::kRight}) {
+                        
+                        if(result.type != nothing.type) break;
+                                        
+                        auto neighbor = GetNeighborCellPosition(pos, dir);
+                        if (!Feis::IsWithinBoard(neighbor)) continue;
+
+                        auto neighborCell = info.GetLayeredCell(neighbor);
+                        auto neighborFg = neighborCell.GetForeground();
+
+                        if (std::dynamic_pointer_cast<Feis::CollectionCenterCell>(neighborFg) ||
+                            std::dynamic_pointer_cast<Feis::ConveyorCell>(neighborFg)) {
+                            switch (dir) {
+                                case Feis::Direction::kRight:
+                                    result = {Feis::PlayerActionType::BuildRightOutMiningMachine, pos};
+                                    break;
+                                case Feis::Direction::kLeft:
+                                    result = {Feis::PlayerActionType::BuildLeftOutMiningMachine, pos};
+                                    break;
+                                case Feis::Direction::kTop:
+                                    result = {Feis::PlayerActionType::BuildTopOutMiningMachine, pos};
+                                    break;
+                                case Feis::Direction::kBottom:
+                                    result = {Feis::PlayerActionType::BuildBottomOutMiningMachine, pos};
+                                    break;
+                            }
+                        }
+                    }
+                }
             }
-        }
 
-
-        Feis::LayeredCell currLayeredCell = info.GetLayeredCell(nextMove);
-        auto currBg = currLayeredCell.GetBackground();
-        auto currFg = currLayeredCell.GetForeground();
-
-        int nextDirection = getNextDirection(nextMove); // 0: 上, 1: 右, 2: 下, 3: 左
-
-        if (nextDirection == 3) { // ← 要從左邊放輸出物件
-
-            // 1. 是牆壁就跳過
-            if (std::dynamic_pointer_cast<Feis::WallCell>(currFg)) {
-                return GetNextAction(info);
-            }
-
-            // 2. 是礦區就建右輸出的礦機
-            if (auto miningMachine = std::dynamic_pointer_cast<Feis::NumberCell>(currBg)) {
-                if(info.IsScoredProduct(miningMachine->GetNumber())) return {Feis::PlayerActionType::BuildRightOutMiningMachine, nextMove};
-            }
-
-            // 3. 準備建 conveyor
-            Feis::CellPosition rightPos = GetNeighborCellPosition(nextMove, Feis::Direction::kRight);
-
-            Feis::LayeredCell rightCell = info.GetLayeredCell(rightPos);
-            auto rightFg = rightCell.GetForeground();
-
-            bool rightCanReceive = false;
-            if(auto center = std::dynamic_pointer_cast<Feis::CollectionCenterCell>(rightFg)){
-                rightCanReceive = true;
-            }
-            else if(rightPos.col >= 29){
-                rightCanReceive = true;
-            }
-            else if (auto conveyor = std::dynamic_pointer_cast<Feis::ConveyorCell>(rightFg)) {
-                rightCanReceive = true;
-            }
-
-            if (rightCanReceive) {
-                return {Feis::PlayerActionType::BuildLeftToRightConveyor, nextMove};
-            } else {
-                return {Feis::PlayerActionType::BuildTopToBottomConveyor, nextMove};
+            for (auto dir : {Feis::Direction::kTop, Feis::Direction::kBottom,
+                            Feis::Direction::kLeft, Feis::Direction::kRight}) {
                 
+                if(result.type != nothing.type) break;
+
+                auto neighbor = GetNeighborCellPosition(pos, dir);
+                if (!Feis::IsWithinBoard(neighbor)) continue;
+
+                auto neighborCell = info.GetLayeredCell(neighbor);
+                auto neighborFg = neighborCell.GetForeground();
+
+                if (std::dynamic_pointer_cast<Feis::CollectionCenterCell>(neighborFg) ||
+                    std::dynamic_pointer_cast<Feis::ConveyorCell>(neighborFg)) {
+                    switch (dir) {
+                        case Feis::Direction::kRight:
+                            result = {Feis::PlayerActionType::BuildLeftToRightConveyor, pos};
+                            break;
+                        case Feis::Direction::kLeft:
+                            result = {Feis::PlayerActionType::BuildRightToLeftConveyor, pos};
+                            break;
+                        case Feis::Direction::kTop:
+                            result = {Feis::PlayerActionType::BuildBottomToTopConveyor, pos};
+                            break;
+                        case Feis::Direction::kBottom:
+                            result = {Feis::PlayerActionType::BuildTopToBottomConveyor, pos};
+                            break;
+                    }
+                }
             }
+
+            for (auto dir : {Feis::Direction::kTop, Feis::Direction::kBottom,
+                            Feis::Direction::kLeft, Feis::Direction::kRight}) {
+                auto neighbor = GetNeighborCellPosition(pos, dir);
+                if (!Feis::IsWithinBoard(neighbor)) continue;
+
+                auto neighborCell = info.GetLayeredCell(neighbor);
+                auto neighborfg = neighborCell.GetForeground();
+                auto neighborbg = neighborCell.GetBackground();
+                if (visited.count(neighbor)) continue;
+                if(std::dynamic_pointer_cast<Feis::WallCell>(neighborbg) ||
+                    std::dynamic_pointer_cast<Feis::CollectionCenterCell>(neighborbg) ||
+                    std::dynamic_pointer_cast<Feis::MiningMachineCell>(neighborfg) ||
+                    std::dynamic_pointer_cast<Feis::ConveyorCell>(neighborfg) ||
+                    std::dynamic_pointer_cast<Feis::CombinerCell>(neighborfg)){
+                    continue;
+                }
+                visited.insert(neighbor);
+                q.push(neighbor);
+            }
+
+            if (result.type != nothing.type) return result;
+
         }
-        if(nextDirection == 1){
-            // 1. 是牆壁就跳過
-            if (std::dynamic_pointer_cast<Feis::WallCell>(currFg)) {
-                return GetNextAction(info);
-            }
 
-            // 2. 是礦區就建右輸出的礦機
-            if (auto miningMachine = std::dynamic_pointer_cast<Feis::NumberCell>(currBg)) {
-                if(info.IsScoredProduct(miningMachine->GetNumber())) return {Feis::PlayerActionType::BuildLeftOutMiningMachine, nextMove};
-            }
-
-            // 3. 準備建 conveyor
-            Feis::CellPosition leftPos = GetNeighborCellPosition(nextMove, Feis::Direction::kLeft);
-
-            Feis::LayeredCell leftCell = info.GetLayeredCell(leftPos);
-            auto leftFg = leftCell.GetForeground();
-            auto leftbg = leftCell.GetBackground();
-
-            bool leftCanReceive = false;
-            if(auto center = std::dynamic_pointer_cast<Feis::CollectionCenterCell>(leftFg)){
-                leftCanReceive = true;
-            }
-            else if(leftPos.col <= 32){
-                leftCanReceive = true;
-            }
-            if (auto conveyor = std::dynamic_pointer_cast<Feis::ConveyorCell>(leftFg)) {
-                leftCanReceive = true;
-            }
-
-            if (leftCanReceive) {
-                return {Feis::PlayerActionType::BuildRightToLeftConveyor, nextMove};
-            } else {
-                return {Feis::PlayerActionType::BuildTopToBottomConveyor, nextMove};
-                
-            }
-        }
-        if (nextDirection == 0) { // ↑ 向下輸出
-
-            // 1. 是牆壁就跳過
-            if (std::dynamic_pointer_cast<Feis::WallCell>(currFg)) {
-                return GetNextAction(info);
-            }
-
-            // 3. 否則要考慮下方的格子
-            Feis::CellPosition belowPos = GetNeighborCellPosition(nextMove, Feis::Direction::kBottom);
-            if (belowPos.row > 61) {
-                // 邊界保護（根據你地圖大小調整）
-                return {Feis::PlayerActionType::BuildLeftToRightConveyor, nextMove};
-            }
-
-            Feis::LayeredCell belowCell = info.GetLayeredCell(belowPos);
-            auto belowFg = belowCell.GetForeground();
-
-            bool belowCanReceive = false;
-            if(auto center = std::dynamic_pointer_cast<Feis::CollectionCenterCell>(belowFg)){
-                belowCanReceive = true;
-            }
-            else if (auto conveyor = std::dynamic_pointer_cast<Feis::ConveyorCell>(belowFg)) {
-                belowCanReceive = true;
-            }
-
-            if (belowCanReceive) {
-                return {Feis::PlayerActionType::BuildTopToBottomConveyor, nextMove};
-            } else {
-                return {Feis::PlayerActionType::BuildLeftToRightConveyor, nextMove};
-            }
-        }
-        if(nextDirection == 2){
-
-            // 1. 是牆壁就跳過
-            if (std::dynamic_pointer_cast<Feis::WallCell>(currFg)) {
-                return GetNextAction(info);
-            }
-
-            // 3. 否則要考慮下方的格子
-            Feis::CellPosition abovePos = GetNeighborCellPosition(nextMove, Feis::Direction::kTop);
-            if (abovePos.row > 61) {
-                // 邊界保護（根據你地圖大小調整）
-                return {Feis::PlayerActionType::BuildLeftToRightConveyor, nextMove};
-            }
-
-            Feis::LayeredCell aboveCell = info.GetLayeredCell(abovePos);
-            auto aboveFg = aboveCell.GetForeground();
-
-            bool aboveCanReceive = false;
-            if(auto center = std::dynamic_pointer_cast<Feis::CollectionCenterCell>(aboveFg)){
-                aboveCanReceive = true;
-            }
-            else if (auto conveyor = std::dynamic_pointer_cast<Feis::ConveyorCell>(aboveFg)) {
-                aboveCanReceive = true;
-            }
-
-            if (aboveCanReceive) {
-                return {Feis::PlayerActionType::BuildBottomToTopConveyor, nextMove};
-            } else {
-                return {Feis::PlayerActionType::BuildLeftToRightConveyor, nextMove};
-            }
-        }
-        
+        return {Feis::PlayerActionType::None, {0, 0}};
     }
+
 
     void EnqueueAction(const PlayerAction action) { actions_.push(action); }
 

@@ -24,8 +24,6 @@ CellPosition GetMouseCellPosition(const sf::RenderWindow &window) {
             relatedMousePosition.x / GameRendererConfig::kCellSize};
 }
 
-#include <fstream>
-#include <iostream>
 #include <unordered_set>
 #include <algorithm>
 #include <map>
@@ -34,7 +32,7 @@ CellPosition GetMouseCellPosition(const sf::RenderWindow &window) {
 #include <cmath>
 #include <functional>
 
-struct CellPositionHasher {std::size_t operator()(const Feis::CellPosition& pos) const {return std::hash<int>()(pos.row) ^ (std::hash<int>()(pos.col) << 1);}};
+using namespace Feis;
 
 class GamePlayer final : public Feis::IGamePlayer
 {
@@ -72,8 +70,8 @@ public:
         // logFile.flush();
         for (int i = 0; i < 4; ++i) {
             auto neighbor = GetNeighborCellPosition(pos, dirs[i]);
-            if(visited_.count(neighbor) && visited_[neighbor]) continue;   // 如果 neighbor 已經被訪問過，就不要再加入佇列
-            visited_[neighbor] = true;  // 標記為已訪問
+            if(visited_.count(neighbor.row * 100 + neighbor.col) && visited_[neighbor.row * 100 + neighbor.col]) continue;   // 如果 neighbor 已經被訪問過，就不要再加入佇列
+            visited_[neighbor.row * 100 + neighbor.col] = true;  // 標記為已訪問
             if(!Feis::IsWithinBoard(neighbor)) continue; // 如果 neighbor 不在棋盤內，就跳過 
             // log
             // logFile << "Checking direction: " << static_cast<int>(dirs[i]) << " from position: (" 
@@ -109,7 +107,7 @@ public:
                         actions_.push({machineDirection[i], start[i][j]});
                     else
                         actions_.push({beltDirection[i], start[i][j]});
-                    visited_[start[i][j]] = true;
+                    visited_[start[i][j].row * 100 + start[i][j].col] = true;
                 }
             isFirst = 0;
         }
@@ -174,7 +172,7 @@ public:
 
 private:
     std::queue<Feis::PlayerAction> actions_;
-    std::unordered_map<Feis::CellPosition, bool, CellPositionHasher> visited_;
+    std::unordered_map<int, bool> visited_;
     bool isFirst;
     // std::fstream logFile;
 };

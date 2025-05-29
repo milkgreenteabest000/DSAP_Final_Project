@@ -33,6 +33,7 @@ CellPosition GetMouseCellPosition(const sf::RenderWindow &window) {
 #include <unordered_map>
 #include <cmath>
 #include <functional>
+using namespace Feis;
 
 struct CellPositionHasher {std::size_t operator()(const Feis::CellPosition& pos) const {return std::hash<int>()(pos.row) ^ (std::hash<int>()(pos.col) << 1);}};
 
@@ -86,6 +87,98 @@ public:
         }
     }
 
+    PlayerAction findCombiner(PlayerAction curr, const Feis::IGameInfo& info){
+        constexpr Feis::Direction dirs[4] = {
+            Feis::Direction::kTop, Feis::Direction::kBottom,
+            Feis::Direction::kLeft, Feis::Direction::kRight
+        };
+        constexpr Feis::Direction dirsCounterClock[4] = {
+            Feis::Direction::kLeft, Feis::Direction::kRight,
+            Feis::Direction::kBottom, Feis::Direction::kTop
+        };
+        constexpr Feis::Direction dirsClock[4] = {
+            Feis::Direction::kRight, Feis::Direction::kLeft,
+            Feis::Direction::kTop, Feis::Direction::kBottom
+        };
+        constexpr Feis::PlayerActionType miningMachineAct[4] = {
+            Feis::PlayerActionType::BuildTopOutMiningMachine,
+            Feis::PlayerActionType::BuildBottomOutMiningMachine,
+            Feis::PlayerActionType::BuildLeftOutMiningMachine,
+            Feis::PlayerActionType::BuildRightOutMiningMachine
+        };
+        constexpr Feis::PlayerActionType act[4] = {
+            Feis::PlayerActionType::BuildTopOutCombiner,
+            Feis::PlayerActionType::BuildBottomOutCombiner,
+            Feis::PlayerActionType::BuildRightOutCombiner,
+            Feis::PlayerActionType::BuildLeftOutCombiner
+        };
+
+        Feis::CellPosition pos = curr.cellPosition;
+        auto cellNumberCell = std::dynamic_pointer_cast<Feis::NumberCell>(info.GetLayeredCell(pos).GetBackground());
+        if(info.IsScoredProduct(cellNumberCell->GetNumber())) return {Feis::PlayerActionType::None, {0, 0}};
+        
+        //dirsCounterClock
+        for(int i = 0; i < 4; i++){
+            if(curr.type == miningMachineAct[i]){
+                Feis::CellPosition neighbor = GetNeighborCellPosition(pos, dirsCounterClock[i]);
+                auto neighborCell = info.GetLayeredCell(neighbor);
+                auto neighborFg = neighborCell.GetForeground();
+                auto neighborNumberCell = std::dynamic_pointer_cast<Feis::NumberCell>(neighborFg);
+                if( !info.IsScoredProduct(neighborNumberCell->GetNumber()) ){
+                    continue;
+                }
+
+                Feis::CellPosition combinerPos = GetNeighborCellPosition(pos, dirs[i]);
+                return {act[i], combinerPos};
+            }
+        }
+        for(int i = 0; i < 4; i++){
+            if(curr.type == miningMachineAct[i]){
+                Feis::CellPosition neighbor = GetNeighborCellPosition(pos, dirsClock[i]);
+                auto neighborCell = info.GetLayeredCell(neighbor);
+                auto neighborFg = neighborCell.GetForeground();
+                auto neighborNumberCell = std::dynamic_pointer_cast<Feis::NumberCell>(neighborFg);
+                if( !info.IsScoredProduct(neighborNumberCell->GetNumber()) ){
+                    continue;
+                }
+
+                Feis::CellPosition combinerPos = GetNeighborCellPosition(pos, dirs[i]);
+                return {act[i], combinerPos};
+            }
+        }
+    }
+
+    void pushCombuner(PlayerAction combiner){
+        constexpr Feis::Direction attachedDirs[4] = {
+            Feis::Direction::kRight, Feis::Direction::kLeft,
+            Feis::Direction::kTop, Feis::Direction::kBottom
+        };
+        constexpr Feis::PlayerActionType act[4] = {
+            Feis::PlayerActionType::BuildBottomOutCombiner,
+            Feis::PlayerActionType::BuildTopOutCombiner,
+            Feis::PlayerActionType::BuildRightOutCombiner,
+            Feis::PlayerActionType::BuildLeftOutCombiner
+        };
+
+
+        Feis::CellPosition pos = combiner.cellPosition;
+        for(int i = 0; i < 4; i++){
+            if(combiner.type == act[i]){
+                if(visited_.count(pos) && visited_[pos]){
+                    actions_.push({Feis::PlayerActionType::Clear, pos});
+                }
+
+                Feis::CellPosition attachedpos = GetNeighborCellPosition(pos, attachedDirs[i]);
+                if(visited_.count(attachedpos) && visited_[attachedpos]){
+                    actions_.push({Feis::PlayerActionType::Clear, attachedpos});
+                }
+
+                actions_.push(combiner);
+            }
+        }
+    }
+    
+
 
     Feis::PlayerAction GetNextAction(const Feis::IGameInfo& info) override {
 
@@ -103,7 +196,7 @@ public:
                                                         Feis::PlayerActionType::BuildRightToLeftConveyor,
                                                         Feis::PlayerActionType::BuildBottomToTopConveyor};
 
-            for(int i = 0; i < 4; i++)
+            for(int i = 0; i < 4; i++){
                 for(int j = 0; j < 4; j++){
                     if(std::dynamic_pointer_cast<Feis::NumberCell>(info.GetLayeredCell(start[i][j]).GetBackground()))
                         actions_.push({machineDirection[i], start[i][j]});
@@ -111,6 +204,7 @@ public:
                         actions_.push({beltDirection[i], start[i][j]});
                     visited_[start[i][j]] = true;
                 }
+            }
             isFirst = 0;
         }
         
@@ -126,6 +220,8 @@ public:
             auto bg = cell.GetBackground();
             auto fg = cell.GetForeground();
 
+            
+
             auto mining = std::dynamic_pointer_cast<Feis::NumberCell>(bg);
             if (mining && info.IsScoredProduct(mining->GetNumber())) {
                 for (auto dir : {Feis::Direction::kTop, Feis::Direction::kBottom,
@@ -138,7 +234,7 @@ public:
                     auto neighborFg = neighborCell.GetForeground();
 
                     if (std::dynamic_pointer_cast<Feis::CollectionCenterCell>(neighborFg) ||
-                        std::dynamic_pointer_cast<Feis::ConveyorCell>(neighborFg)) {
+                        std::dynamic_pointer_cast<Feis::ConveyorCell>(neighborFg)) 
                         switch (dir) {
                             case Feis::Direction::kRight:
                                 curr = {Feis::PlayerActionType::BuildRightOutMiningMachine, pos};
@@ -154,17 +250,26 @@ public:
                                 break;
                         }
                     }
+
+                    if(curr.type != Feis::PlayerActionType::None){
+                        PlayerAction combiner = findCombiner(curr, info);
+                        if(combiner.type != Feis::PlayerActionType::None){
+                            pushCombuner(combiner);
+                        }
+                        break;
+                    }
+                }
+
+                if(curr.type != Feis::PlayerActionType::None){
+                    if (curr.type == Feis::PlayerActionType::BuildLeftToRightConveyor ||
+                        curr.type == Feis::PlayerActionType::BuildTopToBottomConveyor ||
+                        curr.type == Feis::PlayerActionType::BuildRightToLeftConveyor ||
+                        curr.type == Feis::PlayerActionType::BuildBottomToTopConveyor){
+                        pushNeighbor(pos, info);
+                    return curr;
                 }
             }
 
-            if(curr.type != Feis::PlayerActionType::None){
-                if (curr.type == Feis::PlayerActionType::BuildLeftToRightConveyor ||
-                    curr.type == Feis::PlayerActionType::BuildTopToBottomConveyor ||
-                    curr.type == Feis::PlayerActionType::BuildRightToLeftConveyor ||
-                    curr.type == Feis::PlayerActionType::BuildBottomToTopConveyor)
-                    pushNeighbor(pos, info);
-                return curr;
-            }
         }
 
         return {Feis::PlayerActionType::None, {0, 0}};

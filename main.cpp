@@ -34,6 +34,8 @@ CellPosition GetMouseCellPosition(const sf::RenderWindow &window) {
 #include <cmath>
 #include <vector>
 #include <functional>
+#include <stdlib.h> /* 亂數相關函數 */
+#include <time.h>   /* 時間相關函數 */
 using namespace Feis;
 
 constexpr Feis::CellPosition start[4][4] = {
@@ -106,7 +108,44 @@ std::string actionType2str(const Feis::PlayerActionType& type) {
 class GamePlayer final : public Feis::IGamePlayer
 {
 public:
-    GamePlayer() {for(int i = 0; i < 4; i++) for(int j = 0; j < 4; j++){pushOperation({act[0][i], start[i][j]});}}
+    GamePlayer() {
+        srand( time(NULL) );
+        /*
+        for(int i = 0; i < 4; i++) {
+            for(int j = 0; j < 4; j++){
+                pushOperation({act[0][i], start[i][j]});
+            }
+        }
+        */
+    }
+
+    void initializer(const Feis::IGameInfo& info){
+
+        int dividendNum = 0;
+        for(auto i : {1, 2, 3, 5, 7, 11, 13}){
+            if(info.IsScoredProduct(i)) dividendNum++;
+        }
+        if(dividendNum <= 0){
+            isRequiredCombiner = 1;
+        }
+
+        if(isRequiredCombiner){
+            for(int i = 0; i < 4; i++) {
+                for(int j = 0; j < 4; j++){
+                    pushOperation({act[2][i], start[i][j]});
+                }
+            }
+
+            return;
+        }
+
+        for(int i = 0; i < 4; i++) {
+            for(int j = 0; j < 4; j++){
+                pushOperation({act[0][i], start[i][j]});
+            }
+        }
+    }
+
     void pushOperation(const Feis::PlayerAction& action) {
         actions_.push(action);
         visited_[action.cellPosition.row * 100 + action.cellPosition.col] = action.type;
@@ -143,6 +182,7 @@ public:
                     auto near = GetNeighborCellPosition(neighbor, dirs[j]);
                     if(!Feis::IsWithinBoard(near)) continue;
                     if (isInExcludedSquare(near) && !IsBlockingCell(near, info) && !isOpsiteDirection(act[0][j], visited_[near.row * 100 + near.col])) {
+                        if(isRequiredCombiner && (rand()%100 < 80)) pushOperation({ act[2][j], neighbor });
                         pushOperation({ act[0][j], neighbor });
                         nearMain = true;
                         break;
@@ -154,98 +194,9 @@ public:
         }
     }
 
-    PlayerAction findCombiner(PlayerAction curr, const Feis::IGameInfo& info){
-        constexpr Feis::Direction dirs[4] = {
-            Feis::Direction::kTop, Feis::Direction::kBottom,
-            Feis::Direction::kLeft, Feis::Direction::kRight
-        };
-        constexpr Feis::Direction dirsCounterClock[4] = {
-            Feis::Direction::kLeft, Feis::Direction::kRight,
-            Feis::Direction::kBottom, Feis::Direction::kTop
-        };
-        constexpr Feis::Direction dirsClock[4] = {
-            Feis::Direction::kRight, Feis::Direction::kLeft,
-            Feis::Direction::kTop, Feis::Direction::kBottom
-        };
-        constexpr Feis::PlayerActionType miningMachineAct[4] = {
-            Feis::PlayerActionType::BuildTopOutMiningMachine,
-            Feis::PlayerActionType::BuildBottomOutMiningMachine,
-            Feis::PlayerActionType::BuildLeftOutMiningMachine,
-            Feis::PlayerActionType::BuildRightOutMiningMachine
-        };
-        constexpr Feis::PlayerActionType act[4] = {
-            Feis::PlayerActionType::BuildTopOutCombiner,
-            Feis::PlayerActionType::BuildBottomOutCombiner,
-            Feis::PlayerActionType::BuildRightOutCombiner,
-            Feis::PlayerActionType::BuildLeftOutCombiner
-        };
-
-        Feis::CellPosition pos = curr.cellPosition;
-
-        auto tryFind = [&](const Feis::Direction neighborDir, const Feis::Direction outputDir, 
-            Feis::PlayerActionType expectedType, Feis::PlayerActionType buildAction) -> std::optional<PlayerAction> {
-
-            if (curr.type != expectedType) return std::nullopt;
-            
-            Feis::CellPosition neighbor = GetNeighborCellPosition(pos, neighborDir);
-            auto neighborCell = info.GetLayeredCell(neighbor);
-            auto neighborFg = neighborCell.GetForeground();
-            auto neighborNumberCell = std::dynamic_pointer_cast<Feis::NumberCell>(neighborFg);
-            if (!neighborNumberCell || !info.IsScoredProduct(neighborNumberCell->GetNumber()))
-                return std::nullopt;
-
-            Feis::CellPosition combinerPos = GetNeighborCellPosition(pos, outputDir);
-            return PlayerAction{buildAction, combinerPos};
-        };
-
-
-        for(int i = 0; i < 4; ++i){
-            if (auto result = tryFind(dirsCounterClock[i], dirs[i], miningMachineAct[i], act[i]))
-                return *result;
-        }
-        for(int i = 0; i < 4; ++i){
-            if (auto result = tryFind(dirsClock[i], dirs[i], miningMachineAct[i], act[i]))
-                return *result;
-        }
-
-
-        return {Feis::PlayerActionType::None, {0, 0}};
-    }
-
-    void pushCombiner(PlayerAction combiner, const Feis::IGameInfo& info){
-
-        struct CombinerInfo {
-            Feis::PlayerActionType action;
-            Feis::Direction attachedDir;
-        };
-
-        constexpr CombinerInfo combiners[4] = {
-            {Feis::PlayerActionType::BuildBottomOutCombiner, Feis::Direction::kRight},
-            {Feis::PlayerActionType::BuildTopOutCombiner, Feis::Direction::kLeft},
-            {Feis::PlayerActionType::BuildRightOutCombiner, Feis::Direction::kTop},
-            {Feis::PlayerActionType::BuildLeftOutCombiner, Feis::Direction::kBottom},
-        };
-
-        Feis::CellPosition pos = combiner.cellPosition;
-        for (const auto& c : combiners) {
-            if (combiner.type == c.action) {
-                if (std::dynamic_pointer_cast<Feis::ConveyorCell>(info.GetLayeredCell(pos).GetForeground()));
-                    actions_.push({Feis::PlayerActionType::Clear, pos});
-
-                Feis::CellPosition attached = GetNeighborCellPosition(pos, c.attachedDir);
-                if (std::dynamic_pointer_cast<Feis::ConveyorCell>(info.GetLayeredCell(attached).GetForeground()))
-                    actions_.push({Feis::PlayerActionType::Clear, attached});
-
-                actions_.push(combiner);
-                return;
-            }
-        }
-
-    }
-    
-
-
     Feis::PlayerAction GetNextAction(const Feis::IGameInfo& info) override {
+        if(isFirst) {initializer(info); isFirst = 0;}
+
         while (!actions_.empty()) {
             Feis::PlayerAction curr = actions_.front();
             actions_.pop();
@@ -275,6 +226,8 @@ public:
 private:
     std::queue<Feis::PlayerAction> actions_;
     std::unordered_map<int, Feis::PlayerActionType> visited_;
+    int isFirst = 1;
+    bool isRequiredCombiner = 0;
 };
 
 // end
